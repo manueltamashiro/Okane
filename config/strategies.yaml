@@ -1,0 +1,92 @@
+# Strategy parameters — all tunable values live here.
+# Hard risk limits (max drawdown, loss limits, etc.) are in config/settings.py — do NOT duplicate them here.
+
+# ---------------------------------------------------------------------------
+# Trading Universe
+# ---------------------------------------------------------------------------
+universe:
+  symbols: ["AAPL", "VTV", "VTI"]
+  vix_symbol: "^VIX"
+
+# ---------------------------------------------------------------------------
+# Mean Reversion (Primary — 50% voting weight)
+# Entry: Price < lower BB(20, 2σ) AND RSI(14) < 30
+# Exit:  Price returns to middle BB OR RSI > 50
+# ---------------------------------------------------------------------------
+mean_reversion:
+  enabled: true
+  weight: 0.50
+  timeframe: "1d"
+  bollinger:
+    period: 20
+    std_dev: 2
+  rsi:
+    period: 14
+    oversold: 30        # entry: RSI below this
+    exit_threshold: 50  # exit: RSI above this
+  stop_loss_pct: 0.02   # 2% below entry
+  target_win_rate: 0.60
+
+# ---------------------------------------------------------------------------
+# Momentum / Trend Following (Secondary — 35% voting weight)
+# Entry: EMA(9) crosses above EMA(21) AND ADX(14) > 25
+# Exit:  Reverse crossover OR trailing stop (2x ATR)
+# ---------------------------------------------------------------------------
+momentum:
+  enabled: true
+  weight: 0.35
+  timeframe: "1d"
+  ema_fast: 9
+  ema_slow: 21
+  adx:
+    period: 14
+    min_strength: 25    # entry requires ADX > 25
+  atr:
+    period: 14
+  trailing_stop_atr_multiplier: 2.0
+  target_win_rate: 0.45
+
+# ---------------------------------------------------------------------------
+# Swing Trading (Tertiary — 15% voting weight)
+# Multi-timeframe: Daily for direction, 4H/1H for entry
+# Longer holds to avoid PDT rule on sub-$25K accounts
+# ---------------------------------------------------------------------------
+swing:
+  enabled: true
+  weight: 0.15
+  primary_timeframe: "1d"
+  entry_timeframes: ["4h", "1h"]
+  hold_period_days:
+    min: 3
+    max: 14
+  ema_period: 21
+  adx_period: 14
+  rsi_period: 14
+  adx_trend_min: 20.0
+  rsi_overbought: 65
+
+# ---------------------------------------------------------------------------
+# Meta-Strategy (Signal Aggregation)
+# ---------------------------------------------------------------------------
+meta_strategy:
+  mode: "weighted_vote"      # "unanimous" | "majority" | "weighted_vote"
+  min_signals_required: 2    # at least 2 strategies must agree
+  min_combined_strength: 0.60
+
+# ---------------------------------------------------------------------------
+# Tax Optimization
+# ---------------------------------------------------------------------------
+tax:
+  hold_period_bias_months: 10   # tighten sell signal if held >= this many months
+  wash_sale_window_days: 30
+  tax_reserve_pct: 0.30         # 30% of realized gains → HYSA
+
+# ---------------------------------------------------------------------------
+# Withdrawal Policy (Stage 3+)
+# ---------------------------------------------------------------------------
+withdrawal:
+  reinvest_pct: 0.50
+  tax_reserve_pct: 0.30
+  income_pct: 0.20
+  safety_cushion_pct: 0.10      # must maintain 10% above protected base
+  pause_drawdown_threshold: 0.05

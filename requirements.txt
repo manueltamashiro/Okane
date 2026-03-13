@@ -1,0 +1,45 @@
+# Trader Bot - Python Dependencies
+
+# Broker API
+alpaca-py>=0.21.0
+
+# Data
+yfinance>=0.2.36
+pandas>=2.2.0
+numpy>=1.26.0
+
+# Technical Indicators
+ta>=0.11.0
+
+# Backtesting
+# vectorbt>=0.26.0  # Pinned - install separately if needed: pip install vectorbt
+backtrader>=1.9.78
+
+# Machine Learning (Phase 2+)
+scikit-learn>=1.4.0
+xgboost>=2.0.0
+
+# Database
+sqlalchemy>=2.0.0
+
+# Dashboard
+streamlit>=1.31.0
+plotly>=5.18.0
+
+# Notifications
+slack-sdk>=3.27.0
+python-telegram-bot>=20.7
+
+# Web API (Control Center Phase)
+fastapi>=0.109.0
+uvicorn>=0.27.0
+
+# Utilities
+python-dotenv>=1.0.0
+pyyaml>=6.0.1
+loguru>=0.7.2
+schedule>=1.2.1
+
+# Testing
+pytest>=8.0.0
+pytest-asyncio>=0.23.0

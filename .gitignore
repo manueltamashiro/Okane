@@ -1,0 +1,58 @@
+# Trader Bot .gitignore
+
+# Environment & Secrets
+.env
+.env.local
+.env.production
+*.pem
+**/secrets/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+
+# Data files (large)
+data/*.db
+data/*.sqlite
+data/*.csv
+data/historical/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+
+# Backtest results (regenerable)
+backtest/results/
+backtest/results/*.json
+backtest/plots/
+
+# Streamlit cache (keep .streamlit/config.toml for theme)
+.streamlit/cache/
+.streamlit/credentials.toml
+
+# Node (for React dashboard later)
+node_modules/
+
+# Pytest
+.pytest_cache/
+
+# Claude Code
+CLAUDE.md
