@@ -70,8 +70,8 @@ swing:
 # ---------------------------------------------------------------------------
 meta_strategy:
   mode: "weighted_vote"      # "unanimous" | "majority" | "weighted_vote"
-  min_signals_required: 2    # at least 2 strategies must agree
-  min_combined_strength: 0.60
+  min_signals_required: 2    # require at least 2 strategies to agree before trading
+  min_combined_strength: 0.25
 
 # ---------------------------------------------------------------------------
 # Tax Optimization

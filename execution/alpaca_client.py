@@ -31,6 +31,13 @@ class OrderResult:
 
 
 @dataclass
+class ClockInfo:
+    is_open: bool
+    next_open: datetime | None
+    next_close: datetime | None
+
+
+@dataclass
 class PositionInfo:
     symbol: str
     qty: int
@@ -45,6 +52,7 @@ class AlpacaClientProtocol(Protocol):
     def submit_market_order(self, symbol: str, qty: int, side: str, time_in_force: str = "day") -> OrderResult: ...
     def get_order(self, order_id: str) -> OrderResult: ...
     def get_open_positions(self) -> list[PositionInfo]: ...
+    def get_clock(self) -> ClockInfo: ...
 
 
 def _to_utc_naive(dt: datetime | None) -> datetime | None:
@@ -149,6 +157,17 @@ class AlpacaClient:
             ]
         except Exception as exc:
             raise AlpacaClientError(f"get_open_positions failed: {exc}") from exc
+
+    def get_clock(self) -> ClockInfo:
+        try:
+            clock = self._client.get_clock()
+            return ClockInfo(
+                is_open=clock.is_open,
+                next_open=_to_utc_naive(clock.next_open),
+                next_close=_to_utc_naive(clock.next_close),
+            )
+        except Exception as exc:
+            raise AlpacaClientError(f"get_clock failed: {exc}") from exc
 
 
 def make_alpaca_client(

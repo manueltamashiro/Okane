@@ -7,11 +7,11 @@ All DB access uses isolated in-memory SQLite.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from execution.alpaca_client import AccountInfo, AlpacaClientError, OrderResult, PositionInfo
+from execution.alpaca_client import AccountInfo, AlpacaClientError, ClockInfo, OrderResult, PositionInfo
 from monitoring.notifications import NullNotifier
 from strategies.base import Direction, Signal
 
@@ -83,6 +83,9 @@ class FakeAlpacaClient:
 
     def get_open_positions(self) -> list[PositionInfo]:
         return []
+
+    def get_clock(self) -> ClockInfo:
+        return ClockInfo(is_open=True, next_open=None, next_close=None)
 
 
 # ---------------------------------------------------------------------------
@@ -451,3 +454,198 @@ class TestNotifications:
         report = format_metrics_report(metrics)
         assert isinstance(report, str)
         assert "Sharpe" in report
+
+
+# ---------------------------------------------------------------------------
+# TestClockInfoDataclass
+# ---------------------------------------------------------------------------
+
+class TestClockInfoDataclass:
+    def test_clock_info_fields(self):
+        clock = ClockInfo(
+            is_open=True,
+            next_open=datetime(2024, 6, 3, 13, 30),
+            next_close=datetime(2024, 6, 3, 20, 0),
+        )
+        assert clock.is_open is True
+        assert clock.next_open == datetime(2024, 6, 3, 13, 30)
+        assert clock.next_close == datetime(2024, 6, 3, 20, 0)
+
+    def test_clock_info_none_fields(self):
+        clock = ClockInfo(is_open=False, next_open=None, next_close=None)
+        assert clock.is_open is False
+        assert clock.next_open is None
+        assert clock.next_close is None
+
+
+# ---------------------------------------------------------------------------
+# TestSignalsUniqueConstraint
+# ---------------------------------------------------------------------------
+
+class TestSignalsUniqueConstraint:
+    def test_upsert_signal_deduplicates_same_symbol_timestamp_strategy(self):
+        from data.storage import upsert_signal, fetch_pending_signals
+        sig = Signal(
+            symbol="AAPL",
+            direction=Direction.BUY,
+            price=150.0,
+            stop_loss=147.0,
+            confidence=0.8,
+            strategy_name="meta",
+            timestamp=datetime(2024, 6, 1),
+        )
+        upsert_signal(sig)
+        upsert_signal(sig)  # duplicate
+        pending = fetch_pending_signals()
+        assert len(pending) == 1
+        assert pending[0]["symbol"] == "AAPL"
+        assert pending[0]["strategy"] == "meta"
+
+
+# ---------------------------------------------------------------------------
+# TestFetchLatestBarTimestamp
+# ---------------------------------------------------------------------------
+
+class TestFetchLatestBarTimestamp:
+    def test_returns_max_timestamp_when_bars_exist(self):
+        import pandas as pd
+        import numpy as np
+        from data.storage import upsert_bars, fetch_latest_bar_timestamp
+
+        dates = pd.date_range("2025-01-01", periods=10, freq="1d")
+        rng = np.random.default_rng(42)
+        close = 150 + np.cumsum(rng.normal(0, 1, 10))
+        df = pd.DataFrame(
+            {
+                "open": close - 0.5,
+                "high": close + 1.0,
+                "low": close - 1.0,
+                "close": close,
+                "volume": 100_000.0,
+            },
+            index=dates,
+        )
+        df.index.name = "timestamp"
+        upsert_bars(df, "AAPL", "1d", "yfinance")
+
+        result = fetch_latest_bar_timestamp("AAPL", "1d")
+        assert result is not None
+        expected = datetime(2025, 1, 10)
+        assert result == expected
+
+    def test_returns_none_when_no_bars(self):
+        from data.storage import fetch_latest_bar_timestamp
+
+        result = fetch_latest_bar_timestamp("NONEXISTENT", "1d")
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# TestGenerateSignals — signal generation in PaperTradingSession
+# ---------------------------------------------------------------------------
+
+class TestGenerateSignals:
+    def _make_session(self, client, symbols=None):
+        from execution.paper_trading import PaperTradingSession
+        from monitoring.notifications import NullNotifier
+        session = PaperTradingSession(
+            client=client,
+            notifier=NullNotifier(),
+            symbols=symbols or ["AAPL"],
+            poll_interval_seconds=0,
+        )
+        session._init_strategies()
+        return session
+
+    def _make_enriched_df(self):
+        """Return a small DataFrame with all indicator columns needed by MetaStrategy."""
+        import pandas as pd
+        import numpy as np
+        from data.indicators import add_all_indicators
+
+        dates = pd.date_range("2024-01-01", periods=100, freq="1d")
+        rng = np.random.default_rng(42)
+        close = 150.0 + np.cumsum(rng.normal(0, 1, 100))
+        df = pd.DataFrame(
+            {
+                "open": close - rng.uniform(0, 2, 100),
+                "high": close + rng.uniform(0, 3, 100),
+                "low": close - rng.uniform(0, 3, 100),
+                "close": close,
+                "volume": rng.integers(100_000, 1_000_000, 100).astype(float),
+            },
+            index=dates,
+        )
+        df.index.name = "timestamp"
+        return add_all_indicators(df)
+
+    def test_generate_signals_saves_meta_signal(self, fake_client):
+        from data.storage import fetch_pending_signals
+
+        session = self._make_session(fake_client)
+        enriched_df = self._make_enriched_df()
+
+        buy_signal = Signal(
+            symbol="AAPL",
+            direction=Direction.BUY,
+            price=150.0,
+            stop_loss=147.0,
+            confidence=0.8,
+            strategy_name="meta",
+            timestamp=datetime(2024, 4, 9),
+        )
+
+        with (
+            patch("data.ingestion.ingest_symbol"),
+            patch("data.indicators.calculate_and_store", return_value=enriched_df),
+            patch("data.storage.fetch_latest_bar_timestamp", return_value=datetime(2024, 4, 9)),
+            patch.object(session._meta_strategy, "run", return_value=buy_signal),
+        ):
+            session._generate_signals()
+
+        pending = fetch_pending_signals()
+        assert len(pending) == 1
+        assert pending[0]["strategy"] == "meta"
+        assert pending[0]["signal_type"] == "BUY"
+
+    def test_generate_signals_skips_hold(self, fake_client):
+        from data.storage import fetch_pending_signals
+
+        session = self._make_session(fake_client)
+        enriched_df = self._make_enriched_df()
+
+        with (
+            patch("data.ingestion.ingest_symbol"),
+            patch("data.indicators.calculate_and_store", return_value=enriched_df),
+            patch("data.storage.fetch_latest_bar_timestamp", return_value=datetime(2024, 4, 9)),
+            patch.object(session._meta_strategy, "run", return_value=None),
+        ):
+            session._generate_signals()
+
+        pending = fetch_pending_signals()
+        assert len(pending) == 0
+
+    def test_generate_signals_time_gate(self, fake_client):
+        session = self._make_session(fake_client)
+
+        # Set time-gate: last bar timestamp is same as latest
+        ts = datetime(2024, 4, 9)
+        session._last_signal_bar["AAPL"] = ts
+
+        with (
+            patch("data.ingestion.ingest_symbol"),
+            patch("data.storage.fetch_latest_bar_timestamp", return_value=ts),
+            patch.object(session._meta_strategy, "run") as mock_run,
+        ):
+            session._generate_signals()
+
+        mock_run.assert_not_called()
+
+    def test_generate_signals_error_isolation(self, fake_client):
+        session = self._make_session(fake_client)
+
+        with (
+            patch("data.ingestion.ingest_symbol", side_effect=RuntimeError("boom")),
+        ):
+            # Must not raise
+            session._generate_signals()

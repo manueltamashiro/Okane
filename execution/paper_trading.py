@@ -39,6 +39,7 @@ class PaperTradingSession:
         self._week_open_equity: float = 0.0
         self._running: bool = False
         self._halt_notified: bool = False
+        self._last_signal_bar: dict[str, datetime] = {}  # symbol -> last bar timestamp used for signal gen
 
     # ------------------------------------------------------------------
     # Public API
@@ -47,9 +48,11 @@ class PaperTradingSession:
     def start(self) -> None:
         """Initialize state and enter the polling loop. Blocks until stop() is called."""
         logger.info("[paper_trading] starting session")
+        storage.init_db()
         self._rebuild_portfolio_state()
         self._set_peak_equity()
         reset_daily()
+        self._init_strategies()
         self._running = True
 
         try:
@@ -122,6 +125,79 @@ class PaperTradingSession:
         return current_equity
 
     # ------------------------------------------------------------------
+    # Strategy initialization
+    # ------------------------------------------------------------------
+
+    def _init_strategies(self) -> None:
+        from strategies.mean_reversion import MeanReversionStrategy
+        from strategies.momentum import MomentumStrategy
+        from strategies.swing import SwingStrategy
+        from strategies.meta_strategy import MetaStrategy
+        mr = MeanReversionStrategy()
+        mom = MomentumStrategy()
+        sw = SwingStrategy()
+        self._meta_strategy = MetaStrategy([mr, mom, sw])
+
+    # ------------------------------------------------------------------
+    # Market clock
+    # ------------------------------------------------------------------
+
+    def _is_market_closed(self) -> bool:
+        """Return True if market is closed. Returns False on error (fail-open)."""
+        try:
+            clock = self._client.get_clock()
+            return not clock.is_open
+        except Exception as exc:
+            logger.warning(f"[paper_trading] get_clock failed: {exc} — assuming market open")
+            return False
+
+    # ------------------------------------------------------------------
+    # Signal generation
+    # ------------------------------------------------------------------
+
+    def _generate_signals(self) -> None:
+        """Run data pipeline + MetaStrategy for each symbol, save actionable signals to DB.
+
+        Fail-safe: exceptions per symbol are logged but never propagate.
+        """
+        from data.ingestion import ingest_symbol
+        from data.indicators import calculate_and_store
+        from strategies.base import save_signal
+
+        for symbol in self._symbols:
+            try:
+                # Ingest recent data (5 days, not 365)
+                ingest_symbol(symbol, timeframe="1d", lookback_days=5)
+
+                # Time-gate: skip if no new bar since last generation
+                latest_ts = storage.fetch_latest_bar_timestamp(symbol, "1d")
+                if latest_ts and latest_ts == self._last_signal_bar.get(symbol):
+                    logger.debug(f"[paper_trading] {symbol}: no new bar, skipping signal gen")
+                    continue
+
+                # Calculate indicators and get enriched DataFrame
+                enriched_df = calculate_and_store(symbol, timeframe="1d", lookback_bars=300)
+                if enriched_df.empty:
+                    logger.warning(f"[paper_trading] {symbol}: no data for signal generation")
+                    continue
+
+                signal = self._meta_strategy.run(enriched_df, symbol)
+
+                if signal is not None and signal.direction != Direction.HOLD:
+                    save_signal(signal)
+                    logger.info(f"[paper_trading] signal saved: {signal.direction.name} {symbol} confidence={signal.confidence:.2f}")
+                    # Only lock the time-gate when a signal was actually saved.
+                    # If MetaStrategy returned None, we retry next cycle so conditions
+                    # that develop mid-session are not missed.
+                    if latest_ts:
+                        self._last_signal_bar[symbol] = latest_ts
+                else:
+                    logger.debug(f"[paper_trading] {symbol}: no qualifying signal this cycle")
+
+            except Exception as exc:
+                logger.warning(f"[paper_trading] signal generation failed for {symbol}: {exc}")
+
+    # ------------------------------------------------------------------
     # Poll cycle
     # ------------------------------------------------------------------
 
@@ -163,6 +239,11 @@ class PaperTradingSession:
                 self._halt_notified = True
             return
         self._halt_notified = False  # reset when halt clears
+
+        # Generate signals from latest market data.
+        # Market-hours gate removed: paper trading submits orders that queue and fill
+        # at next open, so there's no reason to block signal generation outside hours.
+        self._generate_signals()
 
         # Process pending signals
         pending_signals = storage.fetch_pending_signals()

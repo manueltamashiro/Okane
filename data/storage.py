@@ -112,6 +112,7 @@ signals = Table(
     Column("risk_rejection_reason", Text),
     Column("notes", Text),              # JSON blob for extra context
     Column("created_at", DateTime, default=_utcnow),
+    UniqueConstraint("symbol", "timestamp", "strategy", name="uq_signals"),
 )
 
 # --- circuit_breaker_state (singleton row, id always = 1) ---
@@ -225,10 +226,36 @@ def get_engine() -> Engine:
     return _engine
 
 
+def _migrate_signals_unique_constraint() -> None:
+    """One-time migration: add unique constraint to signals table if missing.
+
+    Single transaction + IF NOT EXISTS so concurrent init_db() calls (dashboard
+    process and paper-trading process starting together) can't race the
+    check-then-create.
+    """
+    engine = get_engine()
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text("SELECT name FROM sqlite_master WHERE type='index' AND name='uq_signals'")
+        ).fetchall()
+        if rows:
+            return
+        conn.execute(text(
+            "DELETE FROM signals WHERE id NOT IN ("
+            "  SELECT MIN(id) FROM signals GROUP BY symbol, timestamp, strategy"
+            ")"
+        ))
+        conn.execute(
+            text("CREATE UNIQUE INDEX IF NOT EXISTS uq_signals ON signals(symbol, timestamp, strategy)")
+        )
+        logger.info("[storage] migrated: added uq_signals unique index")
+
+
 def init_db() -> None:
     """Create all tables if they don't exist and seed circuit breaker singleton."""
     engine = get_engine()
     metadata.create_all(engine)
+    _migrate_signals_unique_constraint()
     logger.info("Database schema initialized")
 
     with engine.begin() as conn:
@@ -351,6 +378,22 @@ def fetch_bars(
     df = pd.DataFrame(rows, columns=[c.key for c in price_data.c])
     df = df.set_index("timestamp").drop(columns=["id", "symbol", "timeframe", "created_at"])
     return df
+
+
+def fetch_latest_bar_timestamp(symbol: str, timeframe: str) -> datetime | None:
+    """Return the most recent bar timestamp for a symbol/timeframe, or None if no data."""
+    engine = get_engine()
+    with engine.connect() as conn:
+        row = conn.execute(
+            select(func.max(price_data.c.timestamp))
+            .where(price_data.c.symbol == symbol)
+            .where(price_data.c.timeframe == timeframe)
+        ).scalar()
+    if row is None:
+        return None
+    if isinstance(row, str):
+        return datetime.fromisoformat(row)
+    return row
 
 
 # ---------------------------------------------------------------------------

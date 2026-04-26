@@ -84,6 +84,7 @@ def cmd_signals(symbols: list[str]) -> None:
     from strategies.momentum import MomentumStrategy
     from strategies.swing import SwingStrategy
     from strategies.meta_strategy import MetaStrategy
+    from strategies.base import save_signal, Direction
 
     init_db()
 
@@ -105,7 +106,11 @@ def cmd_signals(symbols: list[str]) -> None:
             logger.info(f"  {symbol} [{strategy.__class__.__name__}]: {signal}")
 
         meta_signal = meta.run(enriched_df, symbol)
-        logger.info(f"  {symbol} [MetaStrategy]: {meta_signal}")
+        if meta_signal is not None and meta_signal.direction != Direction.HOLD:
+            save_signal(meta_signal)
+            logger.info(f"  {symbol} [MetaStrategy]: {meta_signal} (SAVED)")
+        else:
+            logger.info(f"  {symbol} [MetaStrategy]: {meta_signal}")
 
 
 def cmd_backtest(
@@ -133,7 +138,7 @@ def cmd_backtest(
 
     if strategy_name not in strategy_map:
         print(f"Unknown strategy '{strategy_name}'. Choose from: {', '.join(strategy_map)}")
-        return
+        sys.exit(2)
 
     strategy = strategy_map[strategy_name]()
 
@@ -141,7 +146,7 @@ def cmd_backtest(
 
     if "error" in result:
         print(f"Backtest error: {result['error']}")
-        return
+        sys.exit(1)
 
     path = save_result(result)
     print(f"Results saved to: {path}")

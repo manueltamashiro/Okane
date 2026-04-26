@@ -25,6 +25,7 @@ from monitoring.dashboard.pages.trades_orders import render_trades_orders
 from monitoring.dashboard.pages.signals import render_signals
 from monitoring.dashboard.pages.performance import render_performance
 from monitoring.dashboard.pages.configuration import render_configuration
+from monitoring.dashboard.pages.strategy_tester import render_strategy_tester
 
 
 def main() -> None:
@@ -44,6 +45,7 @@ def main() -> None:
         "Signals": render_signals,
         "Performance": render_performance,
         "Configuration": render_configuration,
+        "Strategy Tester": render_strategy_tester,
     }
 
     # Sidebar with NYT-style branding
