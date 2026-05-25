@@ -50,21 +50,25 @@ class PaperTradingSession:
         logger.info("[paper_trading] starting session")
         storage.init_db()
         self._rebuild_portfolio_state()
-        self._set_peak_equity()
         reset_daily()
         self._init_strategies()
-        self._running = True
 
+        # Fetch account FIRST so peak-equity bootstrap, session-open equity,
+        # and the notifier all see the same equity reading and we make one API
+        # call instead of two. If Alpaca is unreachable, refuse to start.
         try:
             account = self._client.get_account()
-            self._session_open_equity = account.equity
-            self._week_open_equity = self._get_week_open_equity(account.equity)
-            self._notifier.send_session_started(account.equity)
-            logger.info(f"[paper_trading] session started — equity=${account.equity:.2f}")
         except AlpacaClientError as exc:
             logger.error(f"[paper_trading] failed to fetch account on startup: {exc}")
             self._running = False
             return
+
+        self._set_peak_equity(account.equity)
+        self._session_open_equity = account.equity
+        self._week_open_equity = self._get_week_open_equity(account.equity)
+        self._notifier.send_session_started(account.equity)
+        logger.info(f"[paper_trading] session started — equity=${account.equity:.2f}")
+        self._running = True
 
         while self._running:
             try:
@@ -101,19 +105,20 @@ class PaperTradingSession:
         self._portfolio_state = state
         logger.info(f"[paper_trading] rebuilt portfolio: {[p['symbol'] for p in open_positions]}")
 
-    def _set_peak_equity(self) -> None:
-        """Set peak equity from historical snapshots, or from current account value."""
+    def _set_peak_equity(self, current_equity: float) -> None:
+        """Set peak equity from historical snapshots, or seed from current equity.
+
+        current_equity is passed in (not re-fetched) so the caller's single
+        get_account() reading is the source of truth and we never leave peak
+        at 0.0 when start() proceeds.
+        """
         peak = storage.fetch_peak_equity()
         if peak > 0.0:
             self._peak_equity = peak
             logger.info(f"[paper_trading] peak equity from history: ${self._peak_equity:.2f}")
         else:
-            try:
-                account = self._client.get_account()
-                self._peak_equity = account.equity
-            except AlpacaClientError:
-                self._peak_equity = 0.0
-            logger.info(f"[paper_trading] peak equity initialized: ${self._peak_equity:.2f}")
+            self._peak_equity = current_equity
+            logger.info(f"[paper_trading] peak equity seeded from current account: ${self._peak_equity:.2f}")
 
     def _get_week_open_equity(self, current_equity: float) -> float:
         """Find equity from 7 days ago, or use current if no history."""

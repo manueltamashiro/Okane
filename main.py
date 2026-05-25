@@ -2,14 +2,18 @@
 Trader Bot — Entry Point
 
 Usage:
-  python main.py ingest        Fetch latest OHLCV data for all symbols
-  python main.py indicators    Calculate + store technical indicators
-  python main.py pipeline      Run ingest + indicators in sequence
-  python main.py status        Show DB summary (symbols, bar counts, circuit breaker)
-  python main.py signals          Run all strategies on DB data, print signals
+  python main.py ingest         Fetch latest OHLCV data for all symbols
+  python main.py indicators     Calculate + store technical indicators
+  python main.py pipeline       Run ingest + indicators in sequence
+  python main.py status         Show DB summary (symbols, bar counts, circuit breaker)
+  python main.py signals        Run all strategies on DB data, print signals
   python main.py backtest [symbol] [strategy] [start] [end]
-                                  Run backtest, save JSON results
-  python main.py dashboard     Launch the Streamlit monitoring dashboard
+                                Run backtest, save JSON results
+  python main.py dashboard      Launch the Streamlit monitoring dashboard
+  python main.py paper_trading [poll_interval]
+                                Start the paper trading loop (blocks until Ctrl+C).
+                                Requires Alpaca credentials and Telegram notifier
+                                (set OKANE_ALLOW_NO_NOTIFIER=true to bypass).
 """
 
 import sys
@@ -171,6 +175,68 @@ def cmd_dashboard() -> None:
     subprocess.run(["streamlit", "run", str(dashboard_path)], check=True)
 
 
+def cmd_paper_trading(poll_interval: int = 60) -> None:
+    """Start the paper trading polling loop. Blocks until Ctrl+C / SIGTERM.
+
+    Refuses to start if Telegram notifier is unconfigured — for an unattended
+    long-running session, silent failure is the worst outcome. Set
+    OKANE_ALLOW_NO_NOTIFIER=true in the environment to opt in to flying blind.
+    """
+    import os
+    import signal as sig_module
+    from config.settings import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+
+    # Validate Alpaca credentials early so we fail fast with a clear message
+    try:
+        validate_config()
+    except EnvironmentError as exc:
+        logger.error(f"Cannot start paper trading: {exc}")
+        sys.exit(1)
+
+    # Guard against unattended runs with no notifier — fills, halts, and errors
+    # would all be silent. The dashboard path tolerates this since the user is
+    # present; the CLI path is what cron/launchd will run, so enforce loudly.
+    # Also reject the .env.example placeholder strings, which would otherwise
+    # slip past a simple truthy check and crash at the first Telegram send.
+    allow_null = os.getenv("OKANE_ALLOW_NO_NOTIFIER", "").lower() == "true"
+
+    def _looks_like_placeholder(value: str) -> bool:
+        v = value.strip().lower()
+        return (not v) or v.startswith("your_") or v.endswith("_here")
+
+    telegram_ok = (
+        not _looks_like_placeholder(TELEGRAM_BOT_TOKEN)
+        and not _looks_like_placeholder(TELEGRAM_CHAT_ID)
+    )
+    if not telegram_ok:
+        if not allow_null:
+            logger.error(
+                "Telegram credentials missing or placeholder — refusing to start unattended "
+                "paper trading. Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in .env to real "
+                "values, or set OKANE_ALLOW_NO_NOTIFIER=true to bypass (alerts will be silent)."
+            )
+            sys.exit(1)
+        logger.warning(
+            "OKANE_ALLOW_NO_NOTIFIER=true — paper trading will run with no Telegram alerts. "
+            "Halts, fills, and errors will only appear in logs."
+        )
+
+    from execution.paper_trading import build_session
+
+    session = build_session(poll_interval_seconds=poll_interval)
+
+    def _handle_signal(signum, _frame):  # type: ignore[no-untyped-def]
+        logger.info(f"[main] signal {signum} received — stopping session at end of current poll")
+        session.stop()
+
+    sig_module.signal(sig_module.SIGINT, _handle_signal)
+    sig_module.signal(sig_module.SIGTERM, _handle_signal)
+
+    logger.info(f"[main] paper trading starting (poll_interval={poll_interval}s) — Ctrl+C to stop")
+    session.start()  # blocks
+    logger.info("[main] paper trading session exited cleanly")
+
+
 def cmd_status() -> None:
     """Print a summary of what's in the database."""
     from data.storage import get_db_status, init_db
@@ -213,6 +279,9 @@ COMMANDS = {
         sys.argv[3] if len(sys.argv) > 3 else "mean_reversion",
         sys.argv[4] if len(sys.argv) > 4 else "2024-01-01",
         sys.argv[5] if len(sys.argv) > 5 else "2024-12-31",
+    ),
+    "paper_trading": lambda: cmd_paper_trading(
+        int(sys.argv[2]) if len(sys.argv) > 2 else 60,
     ),
 }
 
