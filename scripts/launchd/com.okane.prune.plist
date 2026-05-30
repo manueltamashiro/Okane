@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Okane — weekly DB retention prune.
+
+  Runs `python main.py prune 90` every Sunday at 18:00 local time, deleting
+  equity snapshots older than 90 days. At a 60s poll interval the paper-trading
+  loop writes ~1440 snapshots/day, so this keeps trader_bot.db bounded.
+
+  INSTALL: same steps as com.okane.pipeline.plist (see README.md).
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.okane.prune</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/manueltamashiro/ai-server/Okane/venv/bin/python</string>
+        <string>main.py</string>
+        <string>prune</string>
+        <string>90</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/manueltamashiro/ai-server/Okane</string>
+
+    <!-- Sunday (Weekday 0) at 18:00 local. -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key>
+        <integer>0</integer>
+        <key>Hour</key>
+        <integer>18</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/manueltamashiro/ai-server/Okane/logs/launchd-prune.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/manueltamashiro/ai-server/Okane/logs/launchd-prune.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+</dict>
+</plist>

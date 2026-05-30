@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Okane — paper trading keep-alive.
+
+  Keeps `python main.py paper_trading` running. KeepAlive restarts the process
+  if it crashes or exits (e.g. on an AlpacaClientError that halts the session).
+  The loop already handles SIGTERM gracefully (finishes the current poll, then
+  exits), so `launchctl unload` stops it cleanly.
+
+  PREREQUISITE: the paper_trading command refuses to start unless Telegram
+  credentials are set in .env, OR OKANE_ALLOW_NO_NOTIFIER=true is exported.
+  For an unattended run you almost certainly want real Telegram credentials so
+  halts and fills are not silent. To bypass anyway, uncomment the env var below.
+
+  INSTALL: same steps as com.okane.pipeline.plist (see README.md). Because this
+  job runs continuously, prefer loading it only once you have validated a manual
+  `python main.py paper_trading` run in the foreground first.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.okane.paper-trading</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/manueltamashiro/ai-server/Okane/venv/bin/python</string>
+        <string>main.py</string>
+        <string>paper_trading</string>
+        <!-- poll interval in seconds (optional; default 60) -->
+        <string>60</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/manueltamashiro/ai-server/Okane</string>
+
+    <!-- Start when loaded and keep it alive across crashes/exits. -->
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- Back off 30s between restarts so a hard-failing start does not spin. -->
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+
+    <key>StandardOutPath</key>
+    <string>/Users/manueltamashiro/ai-server/Okane/logs/launchd-paper-trading.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/manueltamashiro/ai-server/Okane/logs/launchd-paper-trading.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <!-- Uncomment to run without Telegram alerts (NOT recommended for live runs):
+        <key>OKANE_ALLOW_NO_NOTIFIER</key>
+        <string>true</string>
+        -->
+    </dict>
+</dict>
+</plist>

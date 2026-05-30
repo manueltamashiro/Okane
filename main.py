@@ -14,6 +14,8 @@ Usage:
                                 Start the paper trading loop (blocks until Ctrl+C).
                                 Requires Alpaca credentials and Telegram notifier
                                 (set OKANE_ALLOW_NO_NOTIFIER=true to bypass).
+  python main.py prune [days]   Delete equity snapshots older than N days
+                                (default 90) to bound DB growth.
 """
 
 import sys
@@ -263,6 +265,19 @@ def cmd_status() -> None:
     print()
 
 
+def cmd_prune(older_than_days: int = 90) -> None:
+    """Delete equity snapshots older than N days to bound DB growth on long runs."""
+    from data.storage import init_db, prune_equity_snapshots
+
+    init_db()
+    try:
+        deleted = prune_equity_snapshots(older_than_days)
+    except ValueError as exc:
+        logger.error(f"Cannot prune: {exc}")
+        sys.exit(2)
+    print(f"Pruned {deleted} equity snapshots older than {older_than_days} days.")
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -282,6 +297,9 @@ COMMANDS = {
     ),
     "paper_trading": lambda: cmd_paper_trading(
         int(sys.argv[2]) if len(sys.argv) > 2 else 60,
+    ),
+    "prune":      lambda: cmd_prune(
+        int(sys.argv[2]) if len(sys.argv) > 2 else 90,
     ),
 }
 

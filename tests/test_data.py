@@ -688,3 +688,72 @@ class TestIngestSymbol:
         ):
             ingest_symbol("AAPL", "1d", lookback_days=90, use_alpaca=False)
         mock_alpaca_cls.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# prune_equity_snapshots
+# ---------------------------------------------------------------------------
+
+
+class TestPruneEquitySnapshots:
+    """Retention pruning of the equity_snapshots table (backs `main.py prune`)."""
+
+    def _insert_at(self, engine, ts: datetime, equity: float = 100_000.0) -> None:
+        """Insert one snapshot with an explicit timestamp (bypasses _utcnow default)."""
+        with engine.begin() as conn:
+            conn.execute(
+                storage_module.equity_snapshots.insert().values(
+                    timestamp=ts,
+                    equity=equity,
+                    cash=equity,
+                    position_value=0.0,
+                    daily_pnl=0.0,
+                    weekly_pnl=0.0,
+                    drawdown_pct=0.0,
+                    peak_equity=equity,
+                )
+            )
+
+    def _now(self) -> datetime:
+        return datetime.now(timezone.utc).replace(tzinfo=None)
+
+    def test_deletes_only_rows_older_than_cutoff(self, isolated_db):
+        from datetime import timedelta
+        from data.storage import prune_equity_snapshots, fetch_equity_snapshots
+
+        now = self._now()
+        self._insert_at(isolated_db, now - timedelta(days=120))  # stale
+        self._insert_at(isolated_db, now - timedelta(days=91))   # stale (just over)
+        self._insert_at(isolated_db, now - timedelta(days=30))   # fresh
+        self._insert_at(isolated_db, now)                        # fresh
+
+        deleted = prune_equity_snapshots(older_than_days=90)
+
+        assert deleted == 2
+        assert len(fetch_equity_snapshots()) == 2
+
+    def test_returns_zero_when_nothing_to_prune(self, isolated_db):
+        from data.storage import prune_equity_snapshots
+
+        self._insert_at(isolated_db, self._now())
+        assert prune_equity_snapshots(older_than_days=90) == 0
+
+    def test_zero_days_prunes_everything_in_the_past(self, isolated_db):
+        from datetime import timedelta
+        from data.storage import prune_equity_snapshots, fetch_equity_snapshots
+
+        self._insert_at(isolated_db, self._now() - timedelta(seconds=5))
+        deleted = prune_equity_snapshots(older_than_days=0)
+        assert deleted == 1
+        assert fetch_equity_snapshots() == []
+
+    def test_negative_days_raises_value_error(self, isolated_db):
+        from data.storage import prune_equity_snapshots
+
+        with pytest.raises(ValueError):
+            prune_equity_snapshots(older_than_days=-1)
+
+    def test_empty_table_returns_zero(self, isolated_db):
+        from data.storage import prune_equity_snapshots
+
+        assert prune_equity_snapshots(older_than_days=90) == 0

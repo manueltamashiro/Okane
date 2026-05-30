@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Okane — daily data pipeline (ingest + indicators).
+
+  Runs `python main.py pipeline` once per day at 17:00 local time, after the US
+  market close (16:00 ET), so the day's bars are available for the next session.
+
+  INSTALL (see scripts/launchd/README.md for full instructions):
+    1. Edit the absolute paths below if your checkout is not at
+       /Users/manueltamashiro/ai-server/Okane.
+    2. cp scripts/launchd/com.okane.pipeline.plist ~/Library/LaunchAgents/
+    3. launchctl load ~/Library/LaunchAgents/com.okane.pipeline.plist
+    4. Verify: launchctl list | grep com.okane
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.okane.pipeline</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/manueltamashiro/ai-server/Okane/venv/bin/python</string>
+        <string>main.py</string>
+        <string>pipeline</string>
+    </array>
+
+    <!-- Run from the project root so relative paths (./data/trader_bot.db) resolve. -->
+    <key>WorkingDirectory</key>
+    <string>/Users/manueltamashiro/ai-server/Okane</string>
+
+    <!-- 17:00 local, every day. -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>17</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <!-- Do not relaunch on exit; this is a one-shot daily job. -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/manueltamashiro/ai-server/Okane/logs/launchd-pipeline.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/manueltamashiro/ai-server/Okane/logs/launchd-pipeline.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+</dict>
+</plist>

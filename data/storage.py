@@ -18,7 +18,7 @@ Tables:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import pandas as pd
@@ -771,6 +771,25 @@ def fetch_equity_snapshots(
     with get_engine().connect() as conn:
         rows = conn.execute(query).fetchall()
     return [dict(r._mapping) for r in rows]
+
+
+def prune_equity_snapshots(older_than_days: int = 90) -> int:
+    """Delete equity snapshots older than `older_than_days`. Returns rows deleted.
+
+    Used by the `prune` CLI command to bound DB growth during long paper-trading
+    runs (~1440 snapshots/day at a 60s poll interval). Cutoff is computed in
+    UTC-naive time to match the storage convention.
+    """
+    if older_than_days < 0:
+        raise ValueError(f"older_than_days must be >= 0, got {older_than_days}")
+    cutoff = _utcnow() - timedelta(days=older_than_days)
+    with get_engine().begin() as conn:
+        result = conn.execute(
+            equity_snapshots.delete().where(equity_snapshots.c.timestamp < cutoff)
+        )
+    deleted = result.rowcount or 0
+    logger.info(f"[storage] pruned {deleted} equity snapshots older than {older_than_days}d (cutoff={cutoff})")
+    return deleted
 
 
 # ---------------------------------------------------------------------------
