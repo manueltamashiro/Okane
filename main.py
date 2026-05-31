@@ -194,7 +194,7 @@ def cmd_paper_trading(poll_interval: int = 60) -> None:
     """
     import os
     import signal as sig_module
-    from config.settings import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+    from config.settings import telegram_configured
 
     # Validate Alpaca credentials early so we fail fast with a clear message
     try:
@@ -206,19 +206,10 @@ def cmd_paper_trading(poll_interval: int = 60) -> None:
     # Guard against unattended runs with no notifier — fills, halts, and errors
     # would all be silent. The dashboard path tolerates this since the user is
     # present; the CLI path is what cron/launchd will run, so enforce loudly.
-    # Also reject the .env.example placeholder strings, which would otherwise
-    # slip past a simple truthy check and crash at the first Telegram send.
+    # telegram_configured() also rejects the .env.example placeholder strings.
     allow_null = os.getenv("OKANE_ALLOW_NO_NOTIFIER", "").lower() == "true"
 
-    def _looks_like_placeholder(value: str) -> bool:
-        v = value.strip().lower()
-        return (not v) or v.startswith("your_") or v.endswith("_here")
-
-    telegram_ok = (
-        not _looks_like_placeholder(TELEGRAM_BOT_TOKEN)
-        and not _looks_like_placeholder(TELEGRAM_CHAT_ID)
-    )
-    if not telegram_ok:
+    if not telegram_configured():
         if not allow_null:
             logger.error(
                 "Telegram credentials missing or placeholder — refusing to start unattended "

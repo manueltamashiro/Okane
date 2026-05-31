@@ -517,16 +517,26 @@ def render_strategy_tester() -> None:
                     f"**Ready to execute:** {signal.direction.value} {s_symbol} "
                     f"@ ${signal.price:,.2f} (confidence {signal.confidence:.0%})"
                 )
+                # Explicit confirmation gate: this places a REAL order. The button
+                # stays disabled until the operator ticks the box, preventing an
+                # accidental single click (or stray rerun) from trading.
+                confirmed = st.checkbox(
+                    f"I confirm placing a live {signal.direction.value} order for {s_symbol}",
+                    key="tester_execute_confirm",
+                    value=False,
+                )
             with exec_col2:
                 exec_running = is_task_running(_EXEC_TASK)
                 if st.button(
                     "Execute Trade",
                     type="primary",
                     use_container_width=True,
-                    disabled=exec_running or signal_running,
+                    disabled=exec_running or signal_running or not confirmed,
                 ):
                     try:
                         run_task(_EXEC_TASK, _execute_test_trade, signal)
+                        # Reset the gate so the next order requires re-confirmation.
+                        st.session_state["tester_execute_confirm"] = False
                         st.rerun()
                     except RuntimeError as rexc:
                         st.warning(str(rexc))

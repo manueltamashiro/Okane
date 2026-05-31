@@ -27,6 +27,18 @@ def calculate_position_size(
 
     Returns 0 for any invalid input. Never raises.
     """
+    # Reject non-finite inputs first: NaN comparisons are always False, so a NaN
+    # price/stop_loss would slip past the <=0 guards and hit math.floor(nan),
+    # which RAISES ValueError — breaking the "never raises" contract and leaving
+    # the signal unconsumed (re-traded every poll). Bad indicator data must size
+    # to 0, not crash.
+    if not all(math.isfinite(x) for x in (account_value, signal.price, signal.stop_loss, signal.confidence)):
+        logger.warning(
+            f"[position_sizing] non-finite input for {signal.symbol}: "
+            f"account={account_value}, price={signal.price}, "
+            f"stop_loss={signal.stop_loss}, confidence={signal.confidence} — returning 0"
+        )
+        return 0
     if account_value <= 0:
         logger.warning(f"[position_sizing] invalid account_value={account_value}")
         return 0

@@ -66,6 +66,22 @@ LOG_FILE: Path = LOGS_DIR / "trader_bot.log"
 # ---------------------------------------------------------------------------
 # Validation — fail loudly if keys are missing in non-paper non-test mode
 # ---------------------------------------------------------------------------
+def _is_placeholder_credential(value: str) -> bool:
+    """True if a credential is empty or still an .env.example placeholder
+    (e.g. 'your_bot_token_here'). Single source of truth for 'is this real?'."""
+    v = value.strip().lower()
+    return (not v) or v.startswith("your_") or v.endswith("_here")
+
+
+def telegram_configured() -> bool:
+    """True when both Telegram credentials are present and not placeholders.
+
+    Shared by make_notifier() (chooses TelegramNotifier vs NullNotifier) and the
+    paper_trading CLI guard so both agree on what 'configured' means.
+    """
+    return not _is_placeholder_credential(TELEGRAM_BOT_TOKEN) and not _is_placeholder_credential(TELEGRAM_CHAT_ID)
+
+
 def validate_config() -> None:
     """Raise if critical config is missing for live/paper trading."""
     missing = []

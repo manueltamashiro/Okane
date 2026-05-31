@@ -69,9 +69,13 @@ class TelegramNotifier:
 def make_notifier() -> TelegramNotifier | NullNotifier:
     """
     Return TelegramNotifier if credentials configured, NullNotifier otherwise.
+
+    Uses the shared settings.telegram_configured() check so placeholder creds
+    (e.g. 'your_bot_token_here') resolve to NullNotifier rather than a notifier
+    that fails on every send.
     """
-    from config.settings import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
-    if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
+    from config.settings import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, telegram_configured
+    if telegram_configured():
         logger.debug("[notifications] TelegramNotifier active")
         return TelegramNotifier(token=TELEGRAM_BOT_TOKEN, chat_id=TELEGRAM_CHAT_ID)
     logger.warning("[notifications] TELEGRAM credentials not set — using NullNotifier")
