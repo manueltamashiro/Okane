@@ -170,11 +170,19 @@ def cmd_backtest(
 
 
 def cmd_dashboard() -> None:
-    """Launch the Streamlit dashboard."""
+    """Launch the Streamlit dashboard, bound to loopback only.
+
+    The dashboard is unauthenticated and can submit live orders, so the bind
+    address is forced to 127.0.0.1 here as well as in .streamlit/config.toml
+    (defense in depth — a missing/edited config can't accidentally expose it).
+    """
     import subprocess
     from config.settings import BASE_DIR
     dashboard_path = BASE_DIR / "monitoring" / "dashboard.py"
-    subprocess.run(["streamlit", "run", str(dashboard_path)], check=True)
+    subprocess.run(
+        ["streamlit", "run", str(dashboard_path), "--server.address", "127.0.0.1"],
+        check=True,
+    )
 
 
 def cmd_paper_trading(poll_interval: int = 60) -> None:
@@ -223,7 +231,7 @@ def cmd_paper_trading(poll_interval: int = 60) -> None:
             "Halts, fills, and errors will only appear in logs."
         )
 
-    from execution.paper_trading import build_session
+    from execution.paper_trading import build_session, SessionLockError
 
     session = build_session(poll_interval_seconds=poll_interval)
 
@@ -235,7 +243,11 @@ def cmd_paper_trading(poll_interval: int = 60) -> None:
     sig_module.signal(sig_module.SIGTERM, _handle_signal)
 
     logger.info(f"[main] paper trading starting (poll_interval={poll_interval}s) — Ctrl+C to stop")
-    session.start()  # blocks
+    try:
+        session.start()  # blocks
+    except SessionLockError as exc:
+        logger.error(f"Refusing to start: {exc}")
+        sys.exit(1)
     logger.info("[main] paper trading session exited cleanly")
 
 

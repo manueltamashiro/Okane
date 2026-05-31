@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import fcntl
+import os
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 
 from loguru import logger
 
+from config.settings import LOGS_DIR
 from data import storage
 from execution.alpaca_client import AlpacaClientError, AlpacaClientProtocol
 from execution.order_engine import process_signal
@@ -12,6 +16,13 @@ from monitoring.notifications import NotifierProtocol
 from risk.circuit_breakers import check_and_update, reset_daily
 from risk.portfolio import PortfolioState, add_position, remove_position
 from strategies.base import Direction, Signal
+
+
+class SessionLockError(RuntimeError):
+    """Raised when another paper trading session already holds the instance lock."""
+
+
+_DEFAULT_LOCK_PATH = LOGS_DIR / "paper_trading.lock"
 
 
 class PaperTradingSession:
@@ -28,6 +39,7 @@ class PaperTradingSession:
         notifier: NotifierProtocol,
         symbols: list[str],
         poll_interval_seconds: int = 60,
+        lock_path: str | Path | None = None,
     ) -> None:
         self._client = client
         self._notifier = notifier
@@ -40,52 +52,97 @@ class PaperTradingSession:
         self._running: bool = False
         self._halt_notified: bool = False
         self._last_signal_bar: dict[str, datetime] = {}  # symbol -> last bar timestamp used for signal gen
+        self._lock_path: Path = Path(lock_path) if lock_path else _DEFAULT_LOCK_PATH
+        self._lock_fd: int | None = None  # held FD for the flock; None when unlocked
+
+    # ------------------------------------------------------------------
+    # Single-instance lock
+    # ------------------------------------------------------------------
+
+    def _acquire_lock(self) -> None:
+        """Take an exclusive, non-blocking flock so two paper-trading processes
+        cannot run against the same DB and double-submit orders. Raises
+        SessionLockError if another live process already holds it."""
+        self._lock_path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(self._lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except (BlockingIOError, OSError) as exc:
+            os.close(fd)
+            raise SessionLockError(
+                f"another paper trading session is already running "
+                f"(lock held: {self._lock_path}): {exc}"
+            ) from exc
+        # Record our PID for diagnostics; the flock itself is the real guard.
+        os.ftruncate(fd, 0)
+        os.write(fd, f"{os.getpid()}\n".encode())
+        self._lock_fd = fd
+
+    def _release_lock(self) -> None:
+        if self._lock_fd is not None:
+            try:
+                fcntl.flock(self._lock_fd, fcntl.LOCK_UN)
+                os.close(self._lock_fd)
+            except OSError:
+                pass
+            finally:
+                self._lock_fd = None
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
     def start(self) -> None:
-        """Initialize state and enter the polling loop. Blocks until stop() is called."""
+        """Initialize state and enter the polling loop. Blocks until stop() is called.
+
+        Raises SessionLockError if another paper trading process is already running.
+        """
         logger.info("[paper_trading] starting session")
-        storage.init_db()
-        self._rebuild_portfolio_state()
-        reset_daily()
-        self._init_strategies()
 
-        # Fetch account FIRST so peak-equity bootstrap, session-open equity,
-        # and the notifier all see the same equity reading and we make one API
-        # call instead of two. If Alpaca is unreachable, refuse to start.
+        # Single-instance guard FIRST — before any DB or broker work — so two
+        # concurrent processes can never both reach the order path.
+        self._acquire_lock()
+
         try:
-            account = self._client.get_account()
-        except AlpacaClientError as exc:
-            logger.error(f"[paper_trading] failed to fetch account on startup: {exc}")
-            self._running = False
-            return
+            storage.init_db()
+            self._rebuild_portfolio_state()
+            reset_daily()
+            self._init_strategies()
 
-        self._set_peak_equity(account.equity)
-        self._session_open_equity = account.equity
-        self._week_open_equity = self._get_week_open_equity(account.equity)
-        self._notifier.send_session_started(account.equity)
-        logger.info(f"[paper_trading] session started — equity=${account.equity:.2f}")
-        self._running = True
-
-        while self._running:
+            # Fetch account FIRST so peak-equity bootstrap, session-open equity,
+            # and the notifier all see the same equity reading and we make one API
+            # call instead of two. If Alpaca is unreachable, refuse to start.
             try:
-                self._poll_cycle()
+                account = self._client.get_account()
             except AlpacaClientError as exc:
-                logger.error(f"[paper_trading] Alpaca error in poll cycle: {exc}")
-                self._notifier.send_error(f"Alpaca API error — session halted: {exc}")
+                logger.error(f"[paper_trading] failed to fetch account on startup: {exc}")
                 self._running = False
-                break
-            except Exception as exc:
-                logger.error(f"[paper_trading] unexpected error in poll cycle: {exc}")
-                self._notifier.send_error(f"Unexpected error — session halted: {exc}")
-                self._running = False
-                break
-            time.sleep(self._poll_interval)
+                return
 
-        logger.info("[paper_trading] session stopped")
+            self._set_peak_equity(account.equity)
+            self._session_open_equity = account.equity
+            self._week_open_equity = self._get_week_open_equity(account.equity)
+            self._notifier.send_session_started(account.equity)
+            logger.info(f"[paper_trading] session started — equity=${account.equity:.2f}")
+            self._running = True
+
+            while self._running:
+                try:
+                    self._poll_cycle()
+                except AlpacaClientError as exc:
+                    logger.error(f"[paper_trading] Alpaca error in poll cycle: {exc}")
+                    self._notifier.send_error(f"Alpaca API error — session halted: {exc}")
+                    self._running = False
+                    break
+                except Exception as exc:
+                    logger.error(f"[paper_trading] unexpected error in poll cycle: {exc}")
+                    self._notifier.send_error(f"Unexpected error — session halted: {exc}")
+                    self._running = False
+                    break
+                time.sleep(self._poll_interval)
+        finally:
+            self._release_lock()
+            logger.info("[paper_trading] session stopped")
 
     def stop(self) -> None:
         """Signal the polling loop to stop after the current cycle."""

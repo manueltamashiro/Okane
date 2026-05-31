@@ -7,3 +7,10 @@ font = "serif"
 
 [server]
 headless = true
+# Bind to loopback only. The dashboard has NO authentication and can submit
+# live orders / stop the trading bot, so it must never be exposed on the LAN
+# or a public interface. For remote access, front it with an authenticated
+# reverse proxy instead of changing this.
+address = "127.0.0.1"
+enableXsrfProtection = true
+enableCORS = true

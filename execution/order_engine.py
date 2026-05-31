@@ -83,9 +83,26 @@ def process_signal(
             return _reject(f"no open position in {signal.symbol} to sell")
         qty = pos["qty"]
 
+    # Reserve the signal BEFORE submitting. fetch_pending_signals() returns rows
+    # with risk_approved IS NULL; stamping it now means a crash (or any failure)
+    # between here and a successful submit cannot leave the signal re-fetchable
+    # and re-submitted on the next poll cycle. If the reserve write itself fails,
+    # abort without submitting — a missed trade is the safe direction.
+    client_order_id: str | None = None
+    if signal_db_id is not None:
+        try:
+            storage.mark_signal_risk_decision(signal_db_id, approved=True)
+        except Exception as exc:
+            logger.error(f"[order_engine] failed to reserve signal {signal_db_id} before submit: {exc}")
+            return _reject(f"could not reserve signal before submit: {exc}")
+        # Deterministic id → broker-level idempotency on any residual re-submit.
+        client_order_id = f"okane-sig-{signal_db_id}"
+
     # Submit order
     try:
-        order_result = client.submit_market_order(symbol=signal.symbol, qty=qty, side=side)
+        order_result = client.submit_market_order(
+            symbol=signal.symbol, qty=qty, side=side, client_order_id=client_order_id,
+        )
     except AlpacaClientError:
         logger.error(f"[order_engine] Alpaca order submission failed for {signal.symbol}")
         raise  # propagate to session manager — must halt on order failure
@@ -107,13 +124,6 @@ def process_signal(
             f"but insert_order failed: {exc}"
         )
         raise
-
-    # Mark signal as approved
-    if signal_db_id is not None:
-        try:
-            storage.mark_signal_risk_decision(signal_db_id, approved=True)
-        except Exception as exc:
-            logger.error(f"[order_engine] failed to write risk approval to DB: {exc}")
 
     logger.debug(f"[order_engine] {side.upper()} {qty} {signal.symbol} submitted: {order_result.order_id}")
     return OrderOutcome(submitted=True, order_result=order_result, rejection_reason=None, signal_id=signal_db_id)

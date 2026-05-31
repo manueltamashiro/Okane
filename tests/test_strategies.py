@@ -497,6 +497,24 @@ class TestBacktestResults:
             loaded = json.load(f)
         assert loaded["symbol"] == "AAPL"
 
+    def test_save_result_sanitizes_traversal_in_symbol(self, tmp_path, monkeypatch):
+        """A malicious symbol must not escape RESULTS_DIR via path traversal."""
+        from backtest import results as results_module
+        monkeypatch.setattr(results_module, "RESULTS_DIR", tmp_path)
+        result = {
+            "symbol": "../../../../tmp/evil",
+            "strategy_name": "mean_reversion",
+            "signals": [],
+        }
+        path = results_module.save_result(result)
+        # The only security property that matters: the file lands directly inside
+        # the results dir with no path separators (embedded '..' chars in a flat
+        # name are harmless without a separator).
+        assert path.resolve().parent == tmp_path.resolve()
+        assert "/" not in path.name and "\\" not in path.name
+        # Nothing leaked to the traversal target.
+        assert not (tmp_path.parent.parent.parent.parent / "tmp" / "evil").exists()
+
     def test_load_result_roundtrips_correctly(self, tmp_path, monkeypatch):
         from backtest import results as results_module
         monkeypatch.setattr(results_module, "RESULTS_DIR", tmp_path)

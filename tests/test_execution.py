@@ -41,12 +41,16 @@ class FakeAlpacaClient:
         )
 
     def submit_market_order(
-        self, symbol: str, qty: int, side: str, time_in_force: str = "day"
+        self, symbol: str, qty: int, side: str, time_in_force: str = "day",
+        client_order_id: str | None = None,
     ) -> OrderResult:
         if self._raise_on_submit:
             raise AlpacaClientError("Simulated Alpaca failure")
         order_id = f"fake-{symbol}-{len(self.submitted_orders)}"
-        self.submitted_orders.append({"symbol": symbol, "qty": qty, "side": side, "order_id": order_id})
+        self.submitted_orders.append({
+            "symbol": symbol, "qty": qty, "side": side, "order_id": order_id,
+            "client_order_id": client_order_id,
+        })
         return OrderResult(
             order_id=order_id,
             symbol=symbol,

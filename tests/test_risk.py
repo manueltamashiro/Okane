@@ -143,6 +143,34 @@ class TestPositionSizing:
         result = calculate_position_size(garbage, 0.0)
         assert result == 0
 
+    def test_nan_price_returns_zero_not_raises(self):
+        from risk.position_sizing import calculate_position_size
+        nan_signal = Signal(
+            symbol="AAPL", direction=Direction.BUY,
+            price=float("nan"), stop_loss=147.0, confidence=0.8,
+            strategy_name="test", timestamp=datetime(2024, 1, 1),
+        )
+        # Must not raise (would otherwise hit math.floor(nan) -> ValueError)
+        assert calculate_position_size(nan_signal, 50_000.0) == 0
+
+    def test_nan_stop_loss_returns_zero_not_raises(self):
+        from risk.position_sizing import calculate_position_size
+        nan_signal = Signal(
+            symbol="AAPL", direction=Direction.BUY,
+            price=150.0, stop_loss=float("nan"), confidence=0.8,
+            strategy_name="test", timestamp=datetime(2024, 1, 1),
+        )
+        assert calculate_position_size(nan_signal, 50_000.0) == 0
+
+    def test_inf_account_value_returns_zero(self):
+        from risk.position_sizing import calculate_position_size
+        sig = Signal(
+            symbol="AAPL", direction=Direction.BUY,
+            price=150.0, stop_loss=147.0, confidence=0.8,
+            strategy_name="test", timestamp=datetime(2024, 1, 1),
+        )
+        assert calculate_position_size(sig, float("inf")) == 0
+
 
 # ─── TestCircuitBreakers ──────────────────────────────────────────────────────
 

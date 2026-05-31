@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -10,6 +11,15 @@ import numpy as np
 from config.settings import BASE_DIR
 
 RESULTS_DIR = BASE_DIR / "backtest" / "results"
+
+
+def _safe_filename_part(value: str) -> str:
+    """Collapse anything outside [A-Za-z0-9_.-] to '_' so a symbol/strategy
+    string (which can originate from free-text dashboard input) cannot inject
+    path separators or '..' traversal into the result filename."""
+    cleaned = re.sub(r"[^A-Za-z0-9_.-]", "_", str(value))
+    # Strip leading dots so '..' or '.hidden' can't survive as a path part.
+    return cleaned.lstrip(".") or "unknown"
 
 
 def calculate_metrics(
@@ -107,8 +117,14 @@ def save_result(result: dict[str, Any]) -> Path:
     """
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     date_str = datetime.now(timezone.utc).replace(tzinfo=None).strftime("%Y%m%d")
-    filename = f"{result['symbol']}_{result['strategy_name']}_{date_str}.json"
+    symbol = _safe_filename_part(result["symbol"])
+    strategy = _safe_filename_part(result["strategy_name"])
+    filename = f"{symbol}_{strategy}_{date_str}.json"
     path = RESULTS_DIR / filename
+    # Defense in depth: refuse to write outside RESULTS_DIR even if sanitization
+    # is ever weakened.
+    if path.resolve().parent != RESULTS_DIR.resolve():
+        raise ValueError(f"refusing to write result outside results dir: {path}")
     with path.open("w") as f:
         json.dump(result, f, indent=2, default=str)
     return path
