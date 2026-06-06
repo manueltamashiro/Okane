@@ -4,7 +4,7 @@
 alpaca-py>=0.21.0
 
 # Data
-yfinance>=0.2.36
+yfinance>=1.4.1            # >=1.4 relaxes the curl_cffi<0.14 pin so the patched curl_cffi is usable
 pandas>=2.2.0
 numpy>=1.26.0
 
@@ -41,5 +41,20 @@ loguru>=0.7.2
 schedule>=1.2.1
 
 # Testing
-pytest>=8.0.0
+pytest>=9.0.3              # CVE-2025-71176
 pytest-asyncio>=0.23.0
+
+# ---------------------------------------------------------------------------
+# Security floors for transitive dependencies (pip-audit, 2026-06).
+# These are pulled in by streamlit/plotly/yfinance/alpaca/requests rather than
+# listed directly above; pin minimums so a fresh install gets the patched
+# versions. Re-check with `pip-audit` and raise floors when new CVEs land.
+# ---------------------------------------------------------------------------
+pillow>=12.2.0            # PYSEC-2026-165, CVE-2026-40192/42309/42310/42311
+urllib3>=2.7.0            # PYSEC-2026-141, PYSEC-2026-142
+requests>=2.34.2          # CVE-2026-25645
+idna>=3.18               # CVE-2026-45409
+pygments>=2.20.0          # CVE-2026-4539
+curl_cffi>=0.15.0         # CVE-2026-33752 (requires yfinance>=1.4)
+gitpython>=3.1.50         # CVE-2026-42215/42284/44244, GHSA-mv93-w799-cj2w
+starlette>=1.0.1          # PYSEC-2026-161 (transitive via fastapi; fastapi unused today)
